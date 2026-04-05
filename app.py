@@ -9,10 +9,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# رابط البيانات (CSV) للقراءة
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR4E-4aLeigAD1Ehm9OMV8Jwguai9H0wPJH7Z6alA528mE6I2ZFBXH9oDjo1T_UoWVW8nurahgyWUfM/pub?output=csv"
+# الرابط الجديد الذي أرسلته (ورقة الردود)
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vStO5FalGVSBXYzvsCSOJ7CAXaQ1iIZsdSIcYFwnY5j2aQ_1_-QYxHV8kk2NmXKO9q8iCU62q0zZS75/pub?output=csv"
 
-# رابط جوجل فورم الخاص بك (للكتابة)
+# رابط جوجل فورم الخاص بك
 GOOGLE_FORM_URL = "https://docs.google.com/forms/d/1yiAXME-nXY9Sf5FbFXnKl6cdA7p_GCIm0ZeCRSi_NEI/viewform?embedded=true"
 
 # --- 2. نظام المستخدمين ---
@@ -22,8 +22,6 @@ USER_DB = {
     "maint": {"pw": "maint123", "role": "قسم الصيانة"},
     "chef": {"pw": "chef01", "role": "رئيس الورشة"},
 }
-
-ATELIERS = ["Atelier Presse", "Atelier Four", "Atelier Selection", "Atelier PMP", "Atelier PEC", "Atelier LINGE"]
 
 # --- 3. إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
@@ -58,45 +56,41 @@ if st.sidebar.button("تسجيل الخروج"):
 st.title("🛠️ نظام إدارة صيانة SARL Grand Ceram")
 st.divider()
 
-tabs = st.tabs(["📊 سجل الأعطال (صيانة)", "🚨 تبليغ جديد (ورشة)"])
+tabs = st.tabs(["📊 سجل الأعطال المبلغ عنها", "🚨 إرسال تبليغ جديد"])
 
-# --- التبويب 1: لوحة تحكم الصيانة ---
+# --- التبويب 1: لوحة تحكم الصيانة (قراءة البيانات) ---
 with tabs[0]:
     try:
+        # قراءة البيانات مع إلغاء التخزين المؤقت لضمان التحديث
         df = pd.read_csv(SHEET_URL)
-        st.subheader("📋 قائمة التدخلات التقنية الجارية")
+        
+        st.subheader("📋 قائمة التنبيهات المستلمة من الورشات")
         
         if not df.empty:
-            # فلتر الورشات
-            selected = st.multiselect("تصفية حسب الورشة:", ATELIERS, default=ATELIERS)
+            # عرض البيانات كاملة كما تأتي من جوجل فورم
+            st.dataframe(df, use_container_width=True)
             
-            # البحث عن عمود الورشة (جوجل فورم غالباً يسميه باسم السؤال)
-            # سنحاول العثور على أي عمود يحتوي على كلمة 'Atelier'
-            atelier_col = [c for c in df.columns if 'Atelier' in c or 'الورشة' in c]
-            
-            if atelier_col:
-                filtered_df = df[df[atelier_col[0]].isin(selected)]
-                st.dataframe(filtered_df, use_container_width=True)
-            else:
-                st.dataframe(df, use_container_width=True)
+            st.info(f"عدد البلاغات الإجمالي: {len(df)}")
         else:
-            st.info("لا توجد بلاغات مسجلة حالياً.")
+            st.warning("⚠️ الجدول متصل ولكن لا توجد بيانات مسجلة في ملف الإكسل حتى الآن.")
             
-        if st.button("🔄 تحديث البيانات الآن"):
+        if st.button("🔄 تحديث البيانات (Refresh)"):
+            st.cache_data.clear()
             st.rerun()
             
     except Exception as e:
-        st.error(f"⚠️ خطأ في جلب البيانات: {e}")
+        st.error(f"⚠️ فشل في الاتصال بورقة البيانات: {e}")
+        st.info("تأكد من أنك قمت بنشر 'ورقة الردود' (Form Responses) تحديداً بصيغة CSV.")
 
 # --- التبويب 2: نموذج التبليغ (Google Form) ---
 with tabs[1]:
     if st.session_state.role in ["رئيس الورشة", "المدير التقني"]:
-        st.subheader("📝 إرسال بلاغ عطل فوري")
-        st.info("قم بملء الخانات أدناه واضغط Submit ليتم إرسالها لجدول الصيانة.")
+        st.subheader("📝 نموذج التبليغ الفوري")
+        st.markdown("---")
         # دمج الفورم داخل التطبيق
-        st.components.v1.iframe(GOOGLE_FORM_URL, height=700, scrolling=True)
+        st.components.v1.iframe(GOOGLE_FORM_URL, height=800, scrolling=True)
     else:
-        st.warning("⚠️ هذه الصلاحية مخصصة لرؤساء الورشات فقط.")
+        st.warning("⚠️ هذه الصلاحية مخصصة لرؤساء الورشات لإرسال البلاغات.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption(f"Grand Ceram Pro v2.0 - {datetime.now().year}")
+st.sidebar.caption(f"Grand Ceram Pro v2.1")
