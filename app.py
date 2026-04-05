@@ -3,81 +3,76 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-# 1. إعدادات الصفحة
+# إعدادات الصفحة
 st.set_page_config(page_title="Grand Ceram Maintenance", page_icon="🏗️", layout="wide")
 
-# 2. العنوان
 st.title("🏗️ نظام إدارة صيانة جراند سيرام | Grand Ceram")
 st.markdown(f"**التاريخ:** {datetime.now().strftime('%Y-%m-%d')}")
 st.markdown("---")
 
-# --- الحل النهائي لمشكلة التكرار والمفتاح الخاص ---
+# --- معالجة الاتصال والبيانات بنظام "الفلترة" ---
 @st.cache_resource
 def get_connection():
     try:
-        # جلب البيانات من Secrets وتحويلها لقاموس
-        secret_info = st.secrets["connections"]["gsheets"].to_dict()
+        # جلب البيانات من Secrets
+        conf = st.secrets["connections"]["gsheets"].to_dict()
         
-        # تنظيف المفتاح الخاص (استبدال \\n بـ \n الحقيقية)
-        if "private_key" in secret_info:
-            secret_info["private_key"] = secret_info["private_key"].replace("\\n", "\n")
+        # 1. تنظيف المفتاح الخاص (حل مشكلة التشفير)
+        if "private_key" in conf:
+            conf["private_key"] = conf["private_key"].replace("\\n", "\n")
             
-        # إزالة 'type' من القاموس إذا كانت موجودة لتجنب تكرارها مع المتغير في st.connection
-        secret_info.pop("type", None)
+        # 2. حفظ الرابط في متغير منفصل وحذفه من القاموس (حل خطأ الصورة الأخيرة)
+        sheet_url = conf.get("spreadsheet")
         
-        # إنشاء الاتصال (نمرر gsheets و GSheetsConnection بشكل صريح)
-        return st.connection("gsheets", type=GSheetsConnection, **secret_info)
+        # حذف الكلمات التي تسبب "unexpected keyword argument"
+        keys_to_remove = ["spreadsheet", "type"]
+        for key in keys_to_remove:
+            conf.pop(key, None)
+        
+        # 3. إنشاء الاتصال وتمرير الرابط بشكل مستقل
+        return st.connection("gsheets", type=GSheetsConnection, **conf), sheet_url
     except Exception as e:
         st.error(f"⚠️ خطأ في الإعدادات: {e}")
         st.stop()
 
-conn = get_connection()
+# الحصول على الاتصال والرابط
+conn, spreadsheet_url = get_connection()
 
-# 3. دالة قراءة البيانات
 def load_data():
     try:
-        data = conn.read(ttl=5)
-        return data.dropna(how="all")
-    except:
+        # القراءة باستخدام الرابط الصريح
+        return conn.read(spreadsheet=spreadsheet_url, ttl=5).dropna(how="all")
+    except Exception as e:
+        st.error(f"فشل قراءة البيانات: {e}")
         return pd.DataFrame()
 
 df = load_data()
 
-# --- القائمة الجانبية ---
+# --- واجهة الإدخال (القائمة الجانبية) ---
 st.sidebar.header("📝 تسجيل بلاغ جديد")
-with st.sidebar.form(key="maintenance_form", clear_on_submit=True):
-    workshop = st.sidebar.selectbox("الورشة / القسم", ["الفرن (Four)", "التحضير", "التوضيب", "المطحنة", "الميكانيك", "الكهرباء"])
+with st.sidebar.form(key="m_form", clear_on_submit=True):
+    workshop = st.sidebar.selectbox("الورشة", ["الفرن", "التحضير", "التوضيب", "المطحنة", "الميكانيك", "الكهرباء"])
     priority = st.sidebar.select_slider("الأهمية", options=["منخفضة", "متوسطة", "عالية", "عاجلة"])
     description = st.sidebar.text_area("وصف العطل")
     submit = st.form_submit_button("إرسال البلاغ")
 
-if submit:
-    if description:
-        new_report = pd.DataFrame([{
-            "ID": len(df) + 1,
-            "Workshop": workshop,
-            "Priority": priority,
-            "Description": description,
-            "Status": "قيد الانتظار",
-            "Date": datetime.now().strftime("%Y-%m-%d %H:%M")
-        }])
-        updated_df = pd.concat([df, new_report], ignore_index=True)
-        conn.update(data=updated_df)
-        st.success("✅ تم تسجيل البلاغ بنجاح!")
-        st.rerun()
-    else:
-        st.sidebar.warning("⚠️ يرجى كتابة الوصف.")
+if submit and description:
+    new_data = pd.DataFrame([{
+        "ID": len(df) + 1,
+        "Workshop": workshop,
+        "Priority": priority,
+        "Description": description,
+        "Status": "قيد الانتظار",
+        "Date": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }])
+    updated_df = pd.concat([df, new_data], ignore_index=True)
+    conn.update(spreadsheet=spreadsheet_url, data=updated_df)
+    st.success("✅ تم الإرسال!")
+    st.rerun()
 
-# --- عرض الإحصائيات والجدول ---
+# --- عرض النتائج ---
 if not df.empty:
-    c1, c2 = st.columns(2)
-    c1.metric("إجمالي البلاغات", len(df))
-    c2.metric("بلاغات قيد الانتظار", len(df[df['Status'] == 'قيد الانتظار']))
-    
-    st.subheader("📋 قائمة طلبات الصيانة")
+    st.subheader("📋 البلاغات الحالية")
     st.dataframe(df.sort_values(by="ID", ascending=False), use_container_width=True)
 else:
-    st.info("لا توجد بلاغات مسجلة حالياً.")
-
-st.markdown("---")
-st.caption("Grand Ceram v1.2 - تطوير وائل بونيبان")
+    st.info("لا توجد بيانات حالياً.")
