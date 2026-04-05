@@ -10,69 +10,75 @@ st.title("🏗️ نظام إدارة صيانة جراند سيرام | Grand C
 st.markdown(f"**التاريخ:** {datetime.now().strftime('%Y-%m-%d')}")
 st.markdown("---")
 
-# --- معالجة الاتصال والبيانات بنظام "الفلترة" ---
+# --- دالة الاتصال النهائية (بدون تمرير **kwargs لتجنب التعارض) ---
 @st.cache_resource
-def get_connection():
+def manual_connect():
     try:
-        # جلب البيانات من Secrets
-        conf = st.secrets["connections"]["gsheets"].to_dict()
+        # جلب البيانات من القسم الصحيح في Secrets
+        s = st.secrets["connections"]["gsheets"]
         
-        # 1. تنظيف المفتاح الخاص (حل مشكلة التشفير)
-        if "private_key" in conf:
-            conf["private_key"] = conf["private_key"].replace("\\n", "\n")
-            
-        # 2. حفظ الرابط في متغير منفصل وحذفه من القاموس (حل خطأ الصورة الأخيرة)
-        sheet_url = conf.get("spreadsheet")
+        # بناء هيكل الاعتمادات يدوياً لتجنب خطأ "Multiple Values" أو "Unexpected Argument"
+        credentials = {
+            "type": "service_account",
+            "project_id": s["project_id"],
+            "private_key_id": s["private_key_id"],
+            "private_key": s["private_key"].replace("\\n", "\n"),
+            "client_email": s["client_email"],
+            "client_id": s["client_id"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": s["client_x509_cert_url"]
+        }
         
-        # حذف الكلمات التي تسبب "unexpected keyword argument"
-        keys_to_remove = ["spreadsheet", "type"]
-        for key in keys_to_remove:
-            conf.pop(key, None)
-        
-        # 3. إنشاء الاتصال وتمرير الرابط بشكل مستقل
-        return st.connection("gsheets", type=GSheetsConnection, **conf), sheet_url
+        # إنشاء الاتصال (نمرر فقط النوع، والبيانات نستخدمها داخل الدالة)
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        return conn, credentials, s["spreadsheet"]
     except Exception as e:
-        st.error(f"⚠️ خطأ في الإعدادات: {e}")
+        st.error(f"❌ خطأ في قراءة Secrets: {e}")
         st.stop()
 
-# الحصول على الاتصال والرابط
-conn, spreadsheet_url = get_connection()
+conn, creds, sheet_url = manual_connect()
 
+# دالة القراءة المعدلة
 def load_data():
     try:
-        # القراءة باستخدام الرابط الصريح
-        return conn.read(spreadsheet=spreadsheet_url, ttl=5).dropna(how="all")
+        # نمرر الاعتمادات والرابط في كل عملية قراءة لضمان تخطي الإعدادات التلقائية
+        return conn.read(spreadsheet=sheet_url, worksheet="Sheet1", ttl=5, **creds).dropna(how="all")
     except Exception as e:
-        st.error(f"فشل قراءة البيانات: {e}")
+        st.error(f"خطأ في الوصول للجدول: {e}")
         return pd.DataFrame()
 
 df = load_data()
 
-# --- واجهة الإدخال (القائمة الجانبية) ---
-st.sidebar.header("📝 تسجيل بلاغ جديد")
-with st.sidebar.form(key="m_form", clear_on_submit=True):
-    workshop = st.sidebar.selectbox("الورشة", ["الفرن", "التحضير", "التوضيب", "المطحنة", "الميكانيك", "الكهرباء"])
-    priority = st.sidebar.select_slider("الأهمية", options=["منخفضة", "متوسطة", "عالية", "عاجلة"])
-    description = st.sidebar.text_area("وصف العطل")
-    submit = st.form_submit_button("إرسال البلاغ")
+# --- واجهة الإدخال ---
+st.sidebar.header("📝 بلاغ جديد")
+with st.sidebar.form("m_form", clear_on_submit=True):
+    workshop = st.selectbox("القسم", ["الفرن", "التحضير", "التوضيب", "المطحنة", "الميكانيك", "الكهرباء"])
+    desc = st.text_area("وصف العطل")
+    priority = st.select_slider("الأهمية", options=["منخفضة", "عالية"])
+    btn = st.form_submit_button("إرسال")
 
-if submit and description:
-    new_data = pd.DataFrame([{
-        "ID": len(df) + 1,
-        "Workshop": workshop,
-        "Priority": priority,
-        "Description": description,
-        "Status": "قيد الانتظار",
+if btn and desc:
+    new_row = pd.DataFrame([{
+        "ID": len(df)+1, 
+        "Workshop": workshop, 
+        "Description": desc, 
+        "Status": "قيد الانتظار", 
         "Date": datetime.now().strftime("%Y-%m-%d %H:%M")
     }])
-    updated_df = pd.concat([df, new_data], ignore_index=True)
-    conn.update(spreadsheet=spreadsheet_url, data=updated_df)
-    st.success("✅ تم الإرسال!")
-    st.rerun()
+    updated_df = pd.concat([df, new_row], ignore_index=True)
+    try:
+        # التحديث مع تمرير الاعتمادات يدوياً
+        conn.update(spreadsheet=sheet_url, data=updated_df, **creds)
+        st.success("✅ تم حفظ البلاغ بنجاح!")
+        st.rerun()
+    except Exception as e:
+        st.error(f"فشل التحديث: {e}")
 
-# --- عرض النتائج ---
+# العرض
 if not df.empty:
-    st.subheader("📋 البلاغات الحالية")
+    st.subheader("📋 سجل الصيانة")
     st.dataframe(df.sort_values(by="ID", ascending=False), use_container_width=True)
 else:
-    st.info("لا توجد بيانات حالياً.")
+    st.info("لا توجد بلاغات مسجلة.")
