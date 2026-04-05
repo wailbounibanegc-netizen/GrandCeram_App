@@ -3,38 +3,50 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-# إعدادات الصفحة
-st.set_page_config(page_title="Grand Ceram Maintenance", page_icon="🏗️", layout="wide")
+# 1. إعدادات الصفحة الأساسية
+st.set_page_config(
+    page_title="Grand Ceram Maintenance", 
+    page_icon="🏗️", 
+    layout="wide"
+)
 
-# العنوان الرئيسي
+# 2. العنوان والتنسيق العلوي
 st.title("🏗️ نظام إدارة صيانة جراند سيرام | Grand Ceram")
+st.markdown(f"**التاريخ الحالي:** {datetime.now().strftime('%Y-%m-%d')}")
 st.markdown("---")
 
-# الاتصال بجدول بيانات جوجل
+# 3. الاتصال بـ Google Sheets (سيسحب البيانات تلقائياً من Secrets)
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# دالة لقراءة البيانات
+# دالة لتحديث البيانات من الجدول
 def load_data():
-    # قراءة البيانات مع تحديث كل 5 ثوانٍ
-    return conn.read(ttl=5).dropna(how="all")
+    try:
+        # قراءة البيانات وتجاهل الأسطر الفارغة تماماً
+        return conn.read(ttl=5).dropna(how="all")
+    except Exception as e:
+        st.error(f"خطأ في قراءة البيانات: {e}")
+        return pd.DataFrame()
 
-try:
-    df = load_data()
-except Exception as e:
-    st.error("خطأ في الاتصال بقاعدة البيانات. تأكد من إعدادات Secrets وصلاحيات الجدول.")
-    st.stop()
+df = load_data()
 
-# --- القائمة الجانبية لإضافة بلاغ جديد ---
-st.sidebar.header("📝 تسجيل بلاغ صيانة جديد")
-with st.sidebar.form(key="maintenance_form"):
-    workshop = st.selectbox("الورشة / القسم", ["الفرن (Four)", "التحضير (Préparation)", "التوضيب (Triage)", "المطحنة (Broyeur)", "أخرى"])
-    priority = st.select_slider("درجة الأهمية", options=["منخفضة", "متوسطة", "عالية", "عاجلة"])
-    description = st.text_area("وصف العطل / المشكلة")
-    submit_button = st.form_submit_button(label="إرسال البلاغ")
+# --- القائمة الجانبية (إضافة بلاغ جديد) ---
+st.sidebar.header("📝 تسجيل بلاغ جديد")
+with st.sidebar.form(key="maintenance_form", clear_on_submit=True):
+    workshop = st.selectbox(
+        "الورشة / القسم", 
+        ["الفرن (Four)", "التحضير (Préparation)", "التوضيب (Triage)", "المطحنة (Broyeur)", "الميكانيك", "الكهرباء", "أخرى"]
+    )
+    priority = st.select_slider(
+        "درجة الأهمية", 
+        options=["منخفضة", "متوسطة", "عالية", "عاجلة"]
+    )
+    description = st.text_area("وصف العطل بالتفصيل")
+    
+    submit_button = st.form_submit_button(label="إرسال البلاغ إلى القاعدة")
 
 if submit_button:
     if description:
-        # تجهيز البيانات الجديدة
+        # تجهيز السطر الجديد
         new_id = len(df) + 1
         new_report = pd.DataFrame([{
             "ID": new_id,
@@ -45,36 +57,45 @@ if submit_button:
             "Date": datetime.now().strftime("%Y-%m-%d %H:%M")
         }])
         
-        # دمج البيانات وتحديث الجدول
+        # دمج البيانات الجديدة مع القديمة
         updated_df = pd.concat([df, new_report], ignore_index=True)
-        conn.update(data=updated_df)
-        st.sidebar.success("تم تسجيل البلاغ بنجاح!")
-        st.rerun()
+        
+        try:
+            # تحديث جدول جوجل
+            conn.update(data=updated_df)
+            st.sidebar.success("✅ تم تسجيل البلاغ بنجاح في Google Sheets!")
+            st.rerun() # إعادة تحميل الصفحة لتحديث الجدول
+        except Exception as e:
+            st.sidebar.error(f"فشل الإرسال: تأكد من مشاركة الجدول مع إيميل الخدمة. الخطأ: {e}")
     else:
-        st.sidebar.warning("يرجى كتابة وصف العطل.")
+        st.sidebar.warning("⚠️ يرجى كتابة وصف العطل قبل الإرسال.")
 
-# --- عرض البيانات الرئيسية ---
-col1, col2, col3 = st.columns(3)
-col1.metric("إجمالي البلاغات", len(df))
-col2.metric("بلاغات قيد الانتظار", len(df[df['Status'] == 'قيد الانتظار']))
-col3.metric("بلاغات مكتملة", len(df[df['Status'] == 'مكتمل']))
+# --- عرض الإحصائيات السريعة ---
+if not df.empty:
+    col1, col2, col3 = st.columns(3)
+    col1.metric("إجمالي البلاغات", len(df))
+    col2.metric("بلاغات قيد الانتظار", len(df[df['Status'] == 'قيد الانتظار']))
+    col3.metric("بلاغات مكتملة", len(df[df['Status'] == 'مكتمل']))
 
 st.subheader("📋 قائمة طلبات الصيانة الحالية")
 
-# تحسين عرض الجدول
-st.dataframe(
-    df.sort_values(by="ID", ascending=False),
-    use_container_width=True,
-    column_config={
-        "ID": "رقم البلاغ",
-        "Workshop": "الورشة",
-        "Priority": "الأهمية",
-        "Description": "الوصف",
-        "Status": "الحالة",
-        "Date": "التاريخ"
-    }
-)
+# عرض الجدول بشكل تفاعلي ومنظم
+if not df.empty:
+    st.dataframe(
+        df.sort_values(by="ID", ascending=False), # عرض الأحدث أولاً
+        use_container_width=True,
+        column_config={
+            "ID": "رقم",
+            "Workshop": "الورشة",
+            "Priority": "الأهمية",
+            "Description": "وصف العطل",
+            "Status": "الحالة",
+            "Date": "التاريخ والوقت"
+        }
+    )
+else:
+    st.info("لا توجد بلاغات مسجلة حتى الآن. ابدأ بإضافة بلاغ من القائمة الجانبية.")
 
-# --- قسم الإحصائيات البسيط ---
+# --- التذييل ---
 st.markdown("---")
-st.caption("نظام صيانة Grand Ceram - تم التطوير بواسطة وائل بونيبان")
+st.caption("نظام صيانة Grand Ceram v1.0 | مطور بواسطة وائل بونيبان")
