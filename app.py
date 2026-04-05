@@ -1,6 +1,5 @@
 import streamlit as st
-from st_gsheets_connection import GSheetsConnection
-import pandas as pd
+from st_gsheets_connection import GSheetsConnectionimport pandas as pd
 
 # --- إعدادات الصفحة ---
 st.set_page_config(
