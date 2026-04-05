@@ -1,107 +1,77 @@
 import streamlit as st
-from st_gsheets_connection import GSheetsConnection
 import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
 # --- إعدادات الصفحة ---
-st.set_page_config(
-    page_title="Grand Ceram Inventory Control",
-    page_icon="🏗️",
-    layout="wide"
-)
+st.set_page_config(page_title="Grand Ceram Pro", layout="centered")
 
-# --- واجهة المستخدم الرسومية (العنوان) ---
-st.title("🏗️ نظام إدارة المخزون - SARL Grand Ceram")
-st.markdown("---")
+# --- الاتصال بـ Google Sheets ---
+def init_connection():
+    # جلب البيانات من Secrets
+    creds_dict = st.secrets["connections"]["gsheets"]
+    
+    # إصلاح تنسيق المفتاح الخاص
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+    
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_metadata(creds_dict, scope)
+    client = gspread.authorize(creds)
+    
+    # افتح الملف باسمه الصحيح في جوجل درايف
+    return client.open("GrandCeram_Data")
 
-# --- دالة الاتصال الآمن بـ Google Sheets ---
-def connect_to_sheet():
-    try:
-        # استخراج البيانات من Secrets
-        secrets_dict = dict(st.secrets["connections"]["gsheets"])
+try:
+    sh = init_connection()
+    users_sheet = sh.worksheet("Users")
+    stock_sheet = sh.worksheet("Stock")
+except Exception as e:
+    st.error(f"خطأ في الاتصال بقاعدة البيانات: {e}")
+    st.stop()
+
+# --- نظام تسجيل الدخول ---
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    st.header("🏢 نظام إدارة SARL Grand Ceram")
+    with st.form("login_form"):
+        user_input = st.text_input("اسم المستخدم")
+        pass_input = st.text_input("كلمة المرور", type="password")
+        submit = st.form_submit_type("دخول")
         
-        # تصحيح تلقائي لمشكلة الرموز في المفتاح الخاص (Private Key)
-        if "private_key" in secrets_dict:
-            secrets_dict["private_key"] = secrets_dict["private_key"].replace("\\n", "\n")
-        
-        # إنشاء الاتصال
-        conn = st.connection("gsheets", type=GSheetsConnection, **secrets_dict)
-        return conn
-    except Exception as e:
-        st.error(f"⚠️ خطأ في إعدادات الاتصال: {e}")
-        return None
-
-conn = connect_to_sheet()
-
-# --- القائمة الجانبية (Navigation) ---
-menu = ["عرض المخزون", "إضافة مادة جديدة", "البحث والتصفية"]
-choice = st.sidebar.selectbox("القائمة الرئيسية", menu)
-
-if conn:
-    if choice == "عرض المخزون":
-        st.subheader("📊 جدول البيانات الحالي")
-        try:
-            # قراءة البيانات من ورقة العمل الأولى
-            df = conn.read(ttl="10m") # تحديث البيانات كل 10 دقائق
-            st.dataframe(df, use_container_width=True)
+        if submit:
+            # التحقق من المستخدمين من الشيت
+            users_df = pd.DataFrame(users_sheet.get_all_records())
+            user_data = users_df[(users_df['username'] == user_input) & (users_df['password'] == str(pass_input))]
             
-            if st.button("تحديث البيانات الآن 🔄"):
-                st.cache_data.clear()
+            if not user_data.empty:
+                st.session_state.logged_in = True
+                st.session_state.user_role = user_data.iloc[0]['role']
+                st.session_state.user_name = user_input
                 st.rerun()
-        except Exception as e:
-            st.error(f"تعذر قراءة البيانات: {e}")
-
-    elif choice == "إضافة مادة جديدة":
-        st.subheader("📥 إضافة مادة جديدة للمخزن")
-        
-        # نموذج الإدخال
-        with st.form(key="add_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                item_name = st.text_input("اسم المادة")
-                category = st.selectbox("الصنف", ["قطع غيار", "مواد أولية", "أدوات", "أخرى"])
-            with col2:
-                quantity = st.number_input("الكمية", min_value=0)
-                unit = st.text_input("الوحدة (كغ، قطعة، ملم)")
-            
-            notes = st.text_area("ملاحظات إضافية")
-            submit_button = st.form_submit_button(label="حفظ في قاعدة البيانات")
-
-        if submit_button:
-            if item_name:
-                # هنا يتم تجهيز البيانات للإرسال
-                new_data = pd.DataFrame([{
-                    "اسم المادة": item_name,
-                    "الصنف": category,
-                    "الكمية": quantity,
-                    "الوحدة": unit,
-                    "ملاحظات": notes
-                }])
-                
-                # إلحاق البيانات بالجدول (Append)
-                try:
-                    # ملاحظة: يجب أن تكون أعمدة الشيت مطابقة تماماً لهذه الأسماء
-                    existing_data = conn.read()
-                    updated_df = pd.concat([existing_data, new_data], ignore_index=True)
-                    conn.update(data=updated_df)
-                    st.success(f"✅ تم إضافة {item_name} بنجاح!")
-                except Exception as e:
-                    st.error(f"فشلت عملية الحفظ: {e}")
             else:
-                st.warning("يرجى إدخال اسم المادة على الأقل.")
-
-    elif choice == "البحث والتصفية":
-        st.subheader("🔍 البحث السريع عن القطع")
-        search_term = st.text_input("ادخل اسم المادة أو الكود...")
-        
-        if search_term:
-            df = conn.read()
-            # بحث مرن (غير حساس لحالة الأحرف)
-            results = df[df.astype(str).apply(lambda x: x.str.contains(search_term, case=False)).any(axis=1)]
-            
-            if not results.empty:
-                st.write(f"تم العثور على {len(results)} نتيجة:")
-                st.table(results)
-            else:
-                st.info("لا توجد نتائج مطابقة لبحثك.")
-
+                st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
 else:
-    st.info("💡 بانتظار إعداد مفاتيح الاتصال في لوحة Secrets...")
+    # --- واجهة التطبيق بعد الدخول ---
+    st.sidebar.title(f"مرحباً {st.session_state.user_name}")
+    st.sidebar.write(f"الرتبة: {st.session_state.user_role}")
+    
+    if st.sidebar.button("تسجيل الخروج"):
+        st.session_state.logged_in = False
+        st.rerun()
+
+    st.title("📦 لوحة تحكم المخازن والصيانة")
+    
+    # عرض المخزون لكل الرتب
+    st.subheader("حالة المخزون الحالي")
+    stock_data = pd.DataFrame(stock_sheet.get_all_records())
+    st.dataframe(stock_data)
+
+    # صلاحيات خاصة لمسؤول المخازن (وائل)
+    if st.session_state.user_role in ["Gestionnaire magasin", "Admin"]:
+        st.divider()
+        st.subheader("إضافة حركة مخزنية")
+        with st.expander("تسجيل دخول/خروج قطع غيار"):
+            # هنا يمكنك إضافة فورم الإدخال
+            st.info("هذا القسم مخصص لك يا وائل لإدارة التوريدات")
