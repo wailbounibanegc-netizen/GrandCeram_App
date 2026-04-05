@@ -2,17 +2,20 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 
-# --- 1. إعدادات التطبيق الأساسية ---
+# --- 1. إعدادات الصفحة ---
 st.set_page_config(
-    page_title="Grand Ceram Maintenance", 
-    page_icon="⚙️", 
+    page_title="Grand Ceram Maintenance Pro",
+    page_icon="⚙️",
     layout="wide"
 )
 
-# الرابط الخاص ببياناتك المنشور بصيغة CSV
+# رابط البيانات (CSV) للقراءة
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR4E-4aLeigAD1Ehm9OMV8Jwguai9H0wPJH7Z6alA528mE6I2ZFBXH9oDjo1T_UoWVW8nurahgyWUfM/pub?output=csv"
 
-# --- 2. قاعدة بيانات المستخدمين والأدوار ---
+# رابط جوجل فورم الخاص بك (للكتابة)
+GOOGLE_FORM_URL = "https://docs.google.com/forms/d/1yiAXME-nXY9Sf5FbFXnKl6cdA7p_GCIm0ZeCRSi_NEI/viewform?embedded=true"
+
+# --- 2. نظام المستخدمين ---
 USER_DB = {
     "admin": {"pw": "gc2026", "role": "المدير التقني"},
     "wail": {"pw": "wail88", "role": "مسؤول المخازن"},
@@ -20,22 +23,13 @@ USER_DB = {
     "chef": {"pw": "chef01", "role": "رئيس الورشة"},
 }
 
-ATELIERS = [
-    "Atelier Presse", 
-    "Atelier Four", 
-    "Atelier Selection", 
-    "Atelier PMP", 
-    "Atelier PEC", 
-    "Atelier LINGE"
-]
+ATELIERS = ["Atelier Presse", "Atelier Four", "Atelier Selection", "Atelier PMP", "Atelier PEC", "Atelier LINGE"]
 
-# --- 3. إدارة الجلسة (Session State) ---
+# --- 3. إدارة الجلسة ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
-    st.session_state.user = ""
-    st.session_state.role = ""
 
-# --- 4. واجهة تسجيل الدخول ---
+# واجهة تسجيل الدخول
 if not st.session_state.logged_in:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -54,75 +48,55 @@ if not st.session_state.logged_in:
                     st.error("❌ بيانات الدخول غير صحيحة")
     st.stop()
 
-# --- 5. واجهة التطبيق الرئيسية (بعد الدخول) ---
+# --- 4. واجهة التطبيق الرئيسية ---
 st.sidebar.title(f"👤 {st.session_state.role}")
 st.sidebar.write(f"المستخدم: {st.session_state.user}")
 if st.sidebar.button("تسجيل الخروج"):
     st.session_state.logged_in = False
     st.rerun()
 
-st.title("🛠️ نظام إدارة صيانة مصنع Grand Ceram")
-st.markdown(f"**تحديث حي:** {datetime.now().strftime('%H:%M - %Y/%m/%d')}")
+st.title("🛠️ نظام إدارة صيانة SARL Grand Ceram")
+st.divider()
 
-tabs = st.tabs(["📊 لوحة التحكم", "🚨 تبليغ عن عطل", "🔧 حالة المهام"])
+tabs = st.tabs(["📊 سجل الأعطال (صيانة)", "🚨 تبليغ جديد (ورشة)"])
 
-# --- التبويب 1: لوحة التحكم (عرض التبليغات) ---
+# --- التبويب 1: لوحة تحكم الصيانة ---
 with tabs[0]:
     try:
-        # تحميل البيانات من الرابط
         df = pd.read_csv(SHEET_URL)
-        
-        st.subheader("📋 سجل الأعطال والمهمات")
+        st.subheader("📋 قائمة التدخلات التقنية الجارية")
         
         if not df.empty:
-            # التحقق من وجود عمود الورشة لعمل التصفية
-            if 'Atelier' in df.columns:
-                selected = st.multiselect("تصفية حسب الورشة:", ATELIERS, default=ATELIERS)
-                # عرض البيانات التي تتبع الورشات المختارة فقط
-                filtered_df = df[df['Atelier'].isin(selected)]
+            # فلتر الورشات
+            selected = st.multiselect("تصفية حسب الورشة:", ATELIERS, default=ATELIERS)
+            
+            # البحث عن عمود الورشة (جوجل فورم غالباً يسميه باسم السؤال)
+            # سنحاول العثور على أي عمود يحتوي على كلمة 'Atelier'
+            atelier_col = [c for c in df.columns if 'Atelier' in c or 'الورشة' in c]
+            
+            if atelier_col:
+                filtered_df = df[df[atelier_col[0]].isin(selected)]
                 st.dataframe(filtered_df, use_container_width=True)
             else:
-                # إذا لم يجد عمود 'Atelier'، يعرض كل البيانات لكي لا يظهر الجدول فارغاً
-                st.warning("⚠️ تنبيه: عمود 'Atelier' غير موجود في ملف الإكسل، يتم عرض كافة البيانات المتاحة.")
                 st.dataframe(df, use_container_width=True)
         else:
-            st.info("ℹ️ لا توجد بلاغات مسجلة في ملف الإكسل حالياً.")
+            st.info("لا توجد بلاغات مسجلة حالياً.")
+            
+        if st.button("🔄 تحديث البيانات الآن"):
+            st.rerun()
             
     except Exception as e:
-        st.error(f"⚠️ فشل في قراءة البيانات: {e}")
-        st.info("تأكد من أن الملف منشور على الويب بصيغة CSV.")
+        st.error(f"⚠️ خطأ في جلب البيانات: {e}")
 
-# --- التبويب 2: التبليغ عن عطل (خاص برؤساء الورش والمدير) ---
+# --- التبويب 2: نموذج التبليغ (Google Form) ---
 with tabs[1]:
     if st.session_state.role in ["رئيس الورشة", "المدير التقني"]:
-        st.subheader("🚨 إرسال طلب تدخل تقني")
-        with st.form("report_form", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                at = st.selectbox("الورشة", ATELIERS)
-                mc = st.text_input("الآلة المعنية (أو رقمها)")
-            with c2:
-                priority = st.selectbox("الأولوية", ["عادي", "متوسط", "عاجل (توقف إنتاج)"])
-                problem = st.text_area("وصف المشكلة بالتفصيل")
-            
-            if st.form_submit_button("إرسال البلاغ"):
-                # رسالة نجاح مؤقتة (الحفظ الفعلي يتطلب API للكتابة)
-                st.success(f"✅ تم تسجيل البلاغ لورشة {at}. سيظهر في السجل خلال دقائق بعد تحديث جوجل.")
-                st.balloons()
+        st.subheader("📝 إرسال بلاغ عطل فوري")
+        st.info("قم بملء الخانات أدناه واضغط Submit ليتم إرسالها لجدول الصيانة.")
+        # دمج الفورم داخل التطبيق
+        st.components.v1.iframe(GOOGLE_FORM_URL, height=700, scrolling=True)
     else:
-        st.warning("⚠️ هذه الصلاحية مخصصة لرؤساء الورشات فقط لإرسال البلاغات.")
-
-# --- التبويب 3: حالة المهام (خاص بقسم الصيانة والمدير) ---
-with tabs[2]:
-    if st.session_state.role in ["قسم الصيانة", "المدير التقني"]:
-        st.subheader("🔧 متابعة التدخلات التقنية")
-        st.info("هذا القسم مخصص لفريق الصيانة لتحديث حالة العمل.")
-        # يمكن هنا عرض المهام العالقة فقط بناءً على عمود Status في الإكسل
-        if 'df' in locals() and not df.empty:
-            st.write("المهام الجارية:")
-            st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("⚠️ هذا القسم مخصص لفريق الصيانة لمتابعة المهام التقنية.")
+        st.warning("⚠️ هذه الصلاحية مخصصة لرؤساء الورشات فقط.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Grand Ceram Pro v1.5")
+st.sidebar.caption(f"Grand Ceram Pro v2.0 - {datetime.now().year}")
