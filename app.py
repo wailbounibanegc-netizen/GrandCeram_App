@@ -1,46 +1,47 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 
-st.set_page_config(page_title="Grand Ceram Pro", layout="centered")
+# --- إعدادات الصفحة ---
+st.set_page_config(page_title="Grand Ceram Pro", page_icon="🏢")
 
-def init_connection():
-    try:
-        # نسخة من Secrets
-        creds_dict = dict(st.secrets["connections"]["gsheets"])
-        
-        # --- تنظيف المفتاح من أي تشويه في النسخ ---
-        raw_key = creds_dict["private_key"]
-        # تحويل الرموز وإزالة المسافات الزائدة التي تسبب خطأ Signature
-        fixed_key = raw_key.replace("\\n", "\n").strip()
-        
-        # التأكد من وجود البداية والنهاية الصحيحة للمفتاح
-        if "-----BEGIN PRIVATE KEY-----" not in fixed_key:
-            fixed_key = "-----BEGIN PRIVATE KEY-----\n" + fixed_key + "\n-----END PRIVATE KEY-----"
-            
-        creds_dict["private_key"] = fixed_key
-        # ---------------------------------------
+# --- روابط الملفات (استبدل الروابط بالروابط التي نسختها من الخطوة السابقة) ---
+# ملاحظة: يجب نشر كل ورقة (Sheet) على حدة كـ CSV أو نشر الملف كامل وتحديده
+USERS_URL = "ضع_رابط_csv_الخاص_بورقة_المستخدمين_هنا"
+STOCK_URL = "ضع_رابط_csv_الخاص_بورقة_المخزن_هنا"
 
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        return client.open("GrandCeram_Data")
-    except Exception as e:
-        st.error(f"خطأ في الاتصال بقاعدة البيانات: {e}")
-        return None
+@st.cache_data(ttl=600) # تحديث البيانات كل 10 دقائق
+def load_data(url):
+    return pd.read_csv(url)
 
-sh = init_connection()
+try:
+    users_df = load_data(USERS_URL)
+    stock_df = load_data(STOCK_URL)
+except Exception as e:
+    st.error("يرجى التأكد من نشر الملف كـ CSV على الويب")
+    st.stop()
 
-if sh:
-    try:
-        users_sheet = sh.worksheet("Users")
-        stock_sheet = sh.worksheet("Stock")
-        st.success("✅ متصل بنجاح بقاعدة بيانات Grand Ceram")
-    except Exception as e:
-        st.error(f"فشل في الوصول للأوراق: {e}")
-        st.stop()
-    
-    # واجهة الدخول البسيطة
-    st.title("🏢 نظام إدارة المخازن")
-    # (بقية الكود الخاص بك...)
+# --- نظام تسجيل الدخول ---
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
+if not st.session_state.logged_in:
+    st.title("🏢 نظام إدارة Grand Ceram")
+    with st.form("login"):
+        u = st.text_input("اسم المستخدم")
+        p = st.text_input("كلمة المرور", type="password")
+        if st.form_submit_button("دخول"):
+            # التحقق من البيانات
+            user_match = users_df[(users_df['username'].astype(str) == u) & 
+                                  (users_df['password'].astype(str) == str(p))]
+            if not user_match.empty:
+                st.session_state.logged_in = True
+                st.session_state.role = user_match.iloc[0]['role']
+                st.rerun()
+            else:
+                st.error("بيانات الدخول غير صحيحة")
+else:
+    st.title("📦 لوحة تحكم المخازن")
+    st.dataframe(stock_df)
+    if st.button("خروج"):
+        st.session_state.logged_in = False
+        st.rerun()
